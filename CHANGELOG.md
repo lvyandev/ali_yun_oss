@@ -2,6 +2,14 @@
 
 [English](CHANGELOG.md) | [中文](CHANGELOG_zh.md)
 
+## 1.3.1
+
+### 📦 Dependencies
+- Relax the `xml` dependency constraint to `>=6.6.1 <8.0.0`, allowing projects that still resolve `xml` 6.x to use this package while remaining compatible with `xml` 7.x.
+
+### 🔄 Compatibility
+- Backward compatible: dependency constraint adjustment only, no API or behavior changes.
+
 ## 1.3.0
 
 ### 🐛 Fixes
