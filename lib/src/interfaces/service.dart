@@ -1,10 +1,7 @@
 import 'dart:io';
 
 import 'package:dart_aliyun_oss/src/models/models.dart';
-import 'package:dart_aliyun_oss/src/models/object_meta.dart';
 import 'package:dio/dio.dart';
-
-import '../models/list_bucket_result_v2.dart';
 
 // 定义回调类型 (如果尚未定义)
 typedef PartProgressCallback = void Function(

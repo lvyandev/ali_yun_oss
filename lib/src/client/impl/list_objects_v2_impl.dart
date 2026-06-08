@@ -1,7 +1,6 @@
 import 'package:dart_aliyun_oss/src/client/client.dart';
 import 'package:dart_aliyun_oss/src/exceptions/exceptions.dart';
 import 'package:dart_aliyun_oss/src/interfaces/service.dart';
-import 'package:dart_aliyun_oss/src/models/list_bucket_result_v2.dart';
 import 'package:dart_aliyun_oss/src/models/models.dart';
 import 'package:dio/dio.dart';
 
@@ -79,7 +78,7 @@ mixin ListBucketResultImpl on IOSSService {
 
       final Uri uri = client.buildOssUri(
         bucket: updatedParams.bucketName,
-        fileKey: '/', // 列表请求不需要fileKey
+        fileKey: '', // Bucket 根路径请求不需要 Object key
         queryParameters: updatedParams.queryParameters,
       );
 
@@ -91,7 +90,7 @@ mixin ListBucketResultImpl on IOSSService {
       // 创建签名头
       final Map<String, dynamic> headers = client.createSignedHeaders(
         method: 'GET',
-        fileKey: '/',
+        fileKey: '',
         baseHeaders: baseHeaders,
         params: updatedParams,
       );

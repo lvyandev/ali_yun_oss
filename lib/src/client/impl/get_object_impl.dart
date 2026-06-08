@@ -2,7 +2,6 @@ import 'package:dart_aliyun_oss/src/client/client.dart';
 import 'package:dart_aliyun_oss/src/exceptions/exceptions.dart';
 import 'package:dart_aliyun_oss/src/interfaces/service.dart';
 import 'package:dart_aliyun_oss/src/models/models.dart';
-import 'package:dart_aliyun_oss/src/models/object_meta.dart';
 import 'package:dio/dio.dart';
 
 /// GetObjectImpl 是阿里云 OSS 获取对象操作的实现
@@ -79,7 +78,8 @@ mixin GetObjectImpl on IOSSService {
         responseType: ResponseType.bytes,
       );
 
-      final Response<dynamic> response = await client.requestHandler.sendRequest(
+      final Response<dynamic> response =
+          await client.requestHandler.sendRequest(
         uri: uri,
         method: 'GET',
         options: requestOptions,
@@ -117,9 +117,12 @@ mixin GetObjectImpl on IOSSService {
     return client.requestHandler.executeRequest(fileKey, params?.cancelToken, (
       CancelToken cancelToken,
     ) async {
-      // 更新请求参数
+      // 更新请求参数。objectMeta 是本接口的 OSS 子资源参数，
+      // 追加前复制 Map，避免污染调用方复用的 OSSRequestParams。
       OSSRequestParams updatedParams = params ?? const OSSRequestParams();
-      final Map<String, dynamic> queryParameters = updatedParams.queryParameters ?? <String, dynamic>{};
+      final Map<String, dynamic> queryParameters = <String, dynamic>{
+        ...?updatedParams.queryParameters,
+      };
       queryParameters['objectMeta'] = '';
       updatedParams = updatedParams.copyWith(queryParameters: queryParameters);
 
@@ -134,7 +137,7 @@ mixin GetObjectImpl on IOSSService {
 
       // Access private method via the casted client instance
       final Map<String, dynamic> headers = client.createSignedHeaders(
-        method: 'GET',
+        method: 'HEAD',
         fileKey: fileKey,
         baseHeaders: baseHeaders,
         params: updatedParams,
@@ -149,9 +152,10 @@ mixin GetObjectImpl on IOSSService {
         },
       );
 
-      final Response<dynamic> response = await client.requestHandler.sendRequest(
+      final Response<dynamic> response =
+          await client.requestHandler.sendRequest(
         uri: uri,
-        method: 'GET',
+        method: 'HEAD',
         options: requestOptions,
         cancelToken: cancelToken,
         onReceiveProgress: params?.onReceiveProgress,
@@ -162,7 +166,8 @@ mixin GetObjectImpl on IOSSService {
         return null;
       }
       try {
-        final String length = response.headers.value(Headers.contentLengthHeader)!;
+        final String length =
+            response.headers.value(Headers.contentLengthHeader)!;
         return ObjectMeta(
           contentLength: int.parse(length),
           eTag: response.headers.value('ETag')!,
@@ -201,7 +206,8 @@ mixin GetObjectImpl on IOSSService {
       params?.cancelToken,
       (CancelToken cancelToken) async {
         // 更新请求参数
-        final OSSRequestParams updatedParams = params ?? const OSSRequestParams();
+        final OSSRequestParams updatedParams =
+            params ?? const OSSRequestParams();
 
         final Uri uri = client.buildOssUri(
           bucket: updatedParams.bucketName,
@@ -227,7 +233,8 @@ mixin GetObjectImpl on IOSSService {
           responseType: ResponseType.stream,
         );
 
-        final Response<dynamic> response = await client.requestHandler.sendRequest(
+        final Response<dynamic> response =
+            await client.requestHandler.sendRequest(
           uri: uri,
           method: 'GET',
           options: requestOptions,

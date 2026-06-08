@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:dart_aliyun_oss/src/utils/utils.dart';
 
 /// 阿里云OSS V1版本签名工具类
 ///
@@ -23,6 +24,42 @@ class AliOssV1SignUtils {
 
   /// OSS头部前缀常量
   static const String _ossHeaderPrefix = 'x-oss-';
+
+  /// V1 签名需要纳入 CanonicalizedResource 的 OSS 子资源。
+  ///
+  /// OSS V1 规范并不是把所有 query 都放进待签名资源路径；只有这里列出的
+  /// OSS 子资源和响应头覆盖参数需要参与签名。普通业务 query 如果误签，
+  /// 服务端会按不同的 CanonicalizedResource 计算签名并返回 403。
+  static const Set<String> _signedSubresources = <String>{
+    'acl',
+    'append',
+    'bucketInfo',
+    'callback',
+    'callback-var',
+    'cname',
+    'comp',
+    'cors',
+    'delete',
+    'lifecycle',
+    'location',
+    'logging',
+    'objectMeta',
+    'partNumber',
+    'policy',
+    'position',
+    'referer',
+    'replication',
+    'response-cache-control',
+    'response-content-disposition',
+    'response-content-encoding',
+    'response-content-language',
+    'response-content-type',
+    'response-expires',
+    'security-token',
+    'uploadId',
+    'uploads',
+    'x-oss-process',
+  };
 
   /// 生成阿里云OSS V1签名所需的Authorization头
   ///
@@ -295,7 +332,7 @@ class AliOssV1SignUtils {
   ///
   /// 处理流程：
   /// 1. 组合存储空间名称和对象路径
-  /// 2. 如果有查询参数,则添加到资源路径后
+  /// 2. 仅保留 OSS V1 规范要求签名的子资源查询参数
   /// 3. 对生成的路径进行 URL 解码,确保特殊字符正确处理
   ///
   /// 参数：
@@ -306,17 +343,28 @@ class AliOssV1SignUtils {
   static String _buildCanonicalizedResource(Uri uri, String bucket) {
     // 检查 uri.path 是否已经包含 bucket 名称
     final String path = uri.path;
-    if (path.startsWith('/$bucket/')) {
-      // 如果路径已经包含 bucket 名称,则不需要再添加
-      return Uri.decodeFull(
-        '$path${uri.query.isNotEmpty ? '?' : ''}${uri.query}',
-      );
-    } else {
-      // 否则,添加 bucket 名称
-      return Uri.decodeFull(
-        '/$bucket$path${uri.query.isNotEmpty ? '?' : ''}${uri.query}',
-      );
+    final String resource =
+        path.startsWith('/$bucket/') ? path : '/$bucket$path';
+    final String decodedResource = Uri.decodeFull(resource);
+
+    // Header 签名同样需要过滤 query；普通业务 query 会出现在实际 URL，
+    // 但不属于 V1 CanonicalizedResource 的签名子资源。
+    final Map<String, String> signedQueryParameters = <String, String>{};
+    uri.queryParametersAll.forEach((String key, List<String> values) {
+      if (!_signedSubresources.contains(key)) {
+        return;
+      }
+      signedQueryParameters[key] = values.isEmpty ? '' : values.first;
+    });
+
+    if (signedQueryParameters.isEmpty) {
+      return decodedResource;
     }
+
+    return _appendCanonicalizedQuery(
+      decodedResource,
+      signedQueryParameters,
+    );
   }
 
   /// 计算HMAC-SHA1签名并进行Base64编码
@@ -440,16 +488,38 @@ class AliOssV1SignUtils {
     // 2. 构建基础URL
     // 根据是否启用CNAME选择不同的域名构造方式
     final String host = cname ? endpoint : '$bucket.$endpoint';
-    final String path = '/$key';
+    final String encodedPath = OSSUtils.ossUriEncode(
+      '/$key',
+      encodeSlash: false,
+    );
 
-    // 3. 构建规范资源路径
-    // 根据阿里云官方示例，规范资源路径应该是 /{bucket}/{key}
-    // 注意：这里不包含查询参数
-    final String canonicalizedResource = '/$bucket/$key';
+    // URL 签名的 query 同时用于最终 URL 和 CanonicalizedResource。
+    // 先收集可参与签名的用户参数、STS token 和 x-oss-* 参数，再计算签名。
+    final Map<String, String> queryParams = <String, String>{};
+    if (queryParameters != null && queryParameters.isNotEmpty) {
+      _validateCustomQueryParameters(queryParameters);
+      queryParams.addAll(queryParameters);
+    }
+    if (securityToken != null) {
+      queryParams['security-token'] = securityToken;
+    }
+    if (ossHeaders != null && ossHeaders.isNotEmpty) {
+      ossHeaders.forEach((String key, dynamic value) {
+        final String lowerKey = key.toLowerCase();
+        if (lowerKey.startsWith(_ossHeaderPrefix)) {
+          queryParams[lowerKey] = value.toString();
+        }
+      });
+    }
+
+    // 3. 构建规范资源路径。部分 OSS 子资源 query 必须参与 V1 URL 签名。
+    final String canonicalizedResource = _buildCanonicalizedResourceForUrl(
+      bucket: bucket,
+      key: key,
+      queryParameters: queryParams,
+    );
 
     // 4. 构建待签名字符串
-    // 根据阿里云文档和成功的简化版实现，签名字符串的格式应该是：
-    // VERB + "\n" + CONTENT-MD5 + "\n" + CONTENT-TYPE + "\n" + EXPIRES + "\n" + CanonicalizedResource
     final String stringToSign = <String>[
       method.toUpperCase(),
       contentMd5 ?? '',
@@ -461,49 +531,65 @@ class AliOssV1SignUtils {
     // 5. 计算签名
     final String signature = _calculateSignature(accessKeySecret, stringToSign);
 
-    // 6. 构建查询参数
-    final Map<String, String> queryParams = <String, String>{};
-
-    // 6.1 首先添加自定义查询参数（如果有）
-    if (queryParameters != null && queryParameters.isNotEmpty) {
-      // 验证自定义参数不与OSS保留参数冲突
-      _validateCustomQueryParameters(queryParameters);
-      queryParams.addAll(queryParameters);
-    }
-
-    // 6.2 添加OSS签名相关的查询参数
     queryParams.addAll(<String, String>{
       'OSSAccessKeyId': accessKeyId,
       'Expires': expiresTimestamp.toString(),
       'Signature': signature,
     });
 
-    // 7. 添加安全令牌（如果有）
-    if (securityToken != null) {
-      queryParams['security-token'] = securityToken;
+    // 9. 构建最终 URL。V1 签名的 CanonicalizedResource 使用原始 key，
+    // 但实际 URL path 仍必须按 OSS UriEncode 编码，避免 `+` 被服务端当成空格。
+    final String encodedQuery = _buildQueryString(queryParams);
+    return Uri.parse('https://$host$encodedPath?$encodedQuery');
+  }
+
+  static String _buildCanonicalizedResourceForUrl({
+    required String bucket,
+    required String key,
+    required Map<String, String> queryParameters,
+  }) {
+    final String resource = '/$bucket/$key';
+    return _appendCanonicalizedQuery(resource, queryParameters);
+  }
+
+  static String _appendCanonicalizedQuery(
+    String resource,
+    Map<String, String> queryParameters,
+  ) {
+    // OSS V1 子资源按参数名排序，格式为 key 或 key=value。
+    // 这里再次过滤，保证 Header 签名和 URL 签名复用同一套规则。
+    final List<MapEntry<String, String>> signedEntries = queryParameters.entries
+        .where(
+          (MapEntry<String, String> entry) =>
+              _signedSubresources.contains(entry.key),
+        )
+        .toList()
+      ..sort(
+        (MapEntry<String, String> a, MapEntry<String, String> b) =>
+            a.key.compareTo(b.key),
+      );
+
+    if (signedEntries.isEmpty) {
+      return resource;
     }
 
-    // 8. 添加其他查询参数（如果有）
-    if (ossHeaders != null && ossHeaders.isNotEmpty) {
-      ossHeaders.forEach((String key, dynamic value) {
-        if (key.startsWith(_ossHeaderPrefix)) {
-          // 将 x-oss- 前缀的头部添加为查询参数
-          final String paramKey = key.replaceAll('$_ossHeaderPrefix-', '');
-          queryParams[paramKey] = value.toString();
-        }
-      });
-    }
+    final String canonicalizedQuery = signedEntries
+        .map(
+          (MapEntry<String, String> entry) =>
+              entry.value.isEmpty ? entry.key : '${entry.key}=${entry.value}',
+        )
+        .join('&');
+    return '$resource?$canonicalizedQuery';
+  }
 
-    // 9. 构建最终URL
-    // 使用 Uri 构造函数直接构建 URL，与简化版实现一致
-    final Uri uri = Uri(
-      scheme: 'https',
-      host: host,
-      path: path,
-      queryParameters: queryParams,
-    );
-
-    return uri;
+  static String _buildQueryString(Map<String, String> queryParameters) {
+    return queryParameters.entries.map((MapEntry<String, String> entry) {
+      final String encodedKey = OSSUtils.ossUriEncode(entry.key);
+      if (entry.value.isEmpty) {
+        return encodedKey;
+      }
+      return '$encodedKey=${OSSUtils.ossUriEncode(entry.value)}';
+    }).join('&');
   }
 
   /// 验证自定义查询参数

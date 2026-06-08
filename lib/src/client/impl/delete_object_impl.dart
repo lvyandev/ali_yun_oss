@@ -39,9 +39,12 @@ mixin DeleteObjectImpl on IOSSService {
     return client.requestHandler.executeRequest(fileKey, params?.cancelToken, (
       CancelToken cancelToken,
     ) async {
-      // 更新请求参数
+      // 更新请求参数。先复制外部 queryParameters，再追加 versionId，
+      // 避免修改调用方复用的 OSSRequestParams。
       OSSRequestParams updatedParams = params ?? const OSSRequestParams();
-      final Map<String, dynamic> queryParameters = updatedParams.queryParameters ?? <String, dynamic>{};
+      final Map<String, dynamic> queryParameters = <String, dynamic>{
+        ...?updatedParams.queryParameters,
+      };
       if (versionId != null) {
         queryParameters['versionId'] = versionId;
       }
@@ -72,7 +75,8 @@ mixin DeleteObjectImpl on IOSSService {
         responseType: ResponseType.bytes,
       );
 
-      final Response<dynamic> response = await client.requestHandler.sendRequest(
+      final Response<dynamic> response =
+          await client.requestHandler.sendRequest(
         uri: uri,
         method: 'DELETE',
         options: requestOptions,

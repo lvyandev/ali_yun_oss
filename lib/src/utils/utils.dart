@@ -1,5 +1,6 @@
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -22,6 +23,32 @@ export 'semaphore.dart';
 class OSSUtils {
   /// 私有构造函数,防止实例化
   OSSUtils._();
+
+  /// 阿里云 OSS 官方 UriEncode。
+  ///
+  /// OSS V4 签名要求比 Dart [Uri] 默认编码更严格：只有 `A-Z`、`a-z`、
+  /// `0-9`、`-`、`_`、`.`、`~` 保持原样，括号、加号、空格和中文等都必须
+  /// 按 UTF-8 字节转成大写十六进制 `%XX`。构造路径时可通过 [encodeSlash]
+  /// 控制是否保留 `/` 分隔符。
+  static String ossUriEncode(String value, {bool encodeSlash = true}) {
+    final StringBuffer buffer = StringBuffer();
+    for (final int byte in utf8.encode(value)) {
+      final bool isUnreserved = (byte >= 0x41 && byte <= 0x5A) ||
+          (byte >= 0x61 && byte <= 0x7A) ||
+          (byte >= 0x30 && byte <= 0x39) ||
+          byte == 0x2D ||
+          byte == 0x5F ||
+          byte == 0x2E ||
+          byte == 0x7E;
+      if (isUnreserved || (!encodeSlash && byte == 0x2F)) {
+        buffer.writeCharCode(byte);
+      } else {
+        buffer
+            .write('%${byte.toRadixString(16).toUpperCase().padLeft(2, '0')}');
+      }
+    }
+    return buffer.toString();
+  }
 
   /// 计算分片上传的最佳分片配置
   ///

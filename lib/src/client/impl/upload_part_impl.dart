@@ -115,7 +115,7 @@ mixin UploadPartImpl on IOSSService {
           uri: uri,
           method: 'PUT',
           options: requestOptions,
-          data: partData,
+          data: Stream<List<int>>.fromIterable(<List<int>>[partData]),
           cancelToken: cancelToken,
           onReceiveProgress: params?.onReceiveProgress,
           onSendProgress: params?.onSendProgress,

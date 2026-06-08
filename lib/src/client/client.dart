@@ -369,10 +369,25 @@ class OSSClient
         ? config.endpoint // 使用自定义域名
         : '$bucketName.${config.endpoint}'; // 使用标准OSS域名格式
 
-    return Uri.https(
-      hostName,
-      fileKey,
-      stringQueryParams,
+    final String encodedPath = fileKey.isEmpty
+        ? '/'
+        : OSSUtils.ossUriEncode(
+            fileKey.startsWith('/') ? fileKey : '/$fileKey',
+            encodeSlash: false,
+          );
+    final String encodedQuery = stringQueryParams == null
+        ? ''
+        : stringQueryParams.entries.map((MapEntry<String, String> entry) {
+            final String encodedKey = OSSUtils.ossUriEncode(entry.key);
+            if (entry.value.isEmpty) {
+              return encodedKey;
+            }
+            return '$encodedKey=${OSSUtils.ossUriEncode(entry.value)}';
+          }).join('&');
+
+    return Uri.parse(
+      'https://$hostName$encodedPath'
+      '${encodedQuery.isEmpty ? '' : '?$encodedQuery'}',
     );
   }
 
@@ -394,7 +409,7 @@ class OSSClient
   /// 参数：
   /// - [bucketName] 存储空间名称,如果不提供则使用配置中的默认值
   /// - [method] HTTP 请求方法（GET、PUT、POST 等）
-  /// - [fileKey] OSS 对象键（文件路径）
+  /// - [fileKey] OSS 对象键（文件路径）。Bucket 级接口可传空字符串。
   /// - [queryParameters] 可选的查询参数
   /// - [contentLength] 请求体长度（如果有）
   /// - [baseHeaders] 基础请求头,将被扩展并签名
@@ -421,13 +436,11 @@ class OSSClient
     int? contentLength,
     required Map<String, dynamic> baseHeaders,
     DateTime? dateTime,
-    bool isV1Signature = false,
+    bool? isV1Signature,
     OSSRequestParams? params,
   }) {
-    // 验证必要参数
-    if (fileKey.isEmpty) {
-      throw ArgumentError('fileKey 不能为空');
-    }
+    // Bucket 级接口（如 ListMultipartUploads）会对 Bucket 根路径签名，
+    // 此时 fileKey 允许为空字符串。
     if (method.isEmpty) {
       throw ArgumentError('method 不能为空');
     }
@@ -437,8 +450,10 @@ class OSSClient
     final DateTime now = dateTime ?? params?.dateTime ?? DateTime.now().toUtc();
     final String date = HttpDate.format(now);
 
-    // 合并查询参数
-    Map<String, dynamic>? mergedQueryParams = queryParameters;
+    // 合并查询参数。这里必须复制调用方传入的 Map，避免在添加 params.queryParameters
+    // 时污染外部复用的 OSSRequestParams 或直接传入的 queryParameters。
+    Map<String, dynamic>? mergedQueryParams =
+        queryParameters == null ? null : <String, dynamic>{...queryParameters};
     if (params?.queryParameters != null) {
       mergedQueryParams = mergedQueryParams ?? <String, dynamic>{};
       mergedQueryParams.addAll(params!.queryParameters!);
@@ -479,10 +494,17 @@ class OSSClient
     normalizedHeaders['x-oss-date'] = date;
     normalizedHeaders['date'] = date; // 有些场景可能需要 Date
 
+    // 调用方可能只在 OSSRequestParams 里指定签名版本，不能被方法默认值覆盖。
+    final bool effectiveIsV1Signature =
+        isV1Signature ?? params?.isV1Signature ?? false;
+
     // 获取并验证签名策略
-    final IOSSSignStrategy? signStrategy = _signStrategies[isV1Signature];
+    final IOSSSignStrategy? signStrategy =
+        _signStrategies[effectiveIsV1Signature];
     if (signStrategy == null) {
-      throw StateError('未找到${isV1Signature ? 'V1' : 'V4'}签名策略,请确保客户端已正确初始化');
+      throw StateError(
+        '未找到${effectiveIsV1Signature ? 'V1' : 'V4'}签名策略,请确保客户端已正确初始化',
+      );
     }
 
     // 调用签名策略

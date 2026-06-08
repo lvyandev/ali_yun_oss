@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:convert/convert.dart';
 import 'package:crypto/crypto.dart';
-import 'package:dart_aliyun_oss/src/utils/date_formatter.dart';
+import 'package:dart_aliyun_oss/src/utils/utils.dart';
 
 /// 阿里云OSS V4版本签名工具类
 ///
@@ -108,7 +108,7 @@ class AliOssV4SignUtils {
     }
 
     // 1. 处理时间相关参数
-    final DateTime now = dateTime ?? DateTime.now().toUtc();
+    final DateTime now = (dateTime ?? DateTime.now()).toUtc();
     final String signDate = DateFormatter.formatYYYYMMDD(now);
     final String signTime = '${DateFormatter.formatYYYYMMDDTHHMMSS(now)}Z';
 
@@ -246,7 +246,7 @@ class AliOssV4SignUtils {
     final Map<String, dynamic> result = <String, dynamic>{...headers};
 
     // 1. 处理时间相关参数
-    final DateTime now = dateTime ?? DateTime.now().toUtc();
+    final DateTime now = (dateTime ?? DateTime.now()).toUtc();
     final String signTime = '${DateFormatter.formatYYYYMMDDTHHMMSS(now)}Z';
 
     // 2. 更新标准请求头
@@ -331,29 +331,17 @@ class AliOssV4SignUtils {
       throw ArgumentError('bucket 不能为空');
     }
 
-    // 构建路径
-    final StringBuffer path = StringBuffer('/');
-
-    // 根据使用场景决定是否包含 bucket 名称
-    if (!isForSignedUrl) {
-      path.write('$bucket/');
-    }
-
-    // 添加对象键（如果有）
-    if (key.isNotEmpty) {
-      // 编码 key 但保留路径分隔符
-      final String encodedKey = Uri.encodeComponent(key).replaceAll('%2F', '/');
-      path.write(encodedKey);
-    }
-
-    // 确保没有重复的斜杠
-    final String result = path.toString();
-    return result.contains('//') ? result.replaceAll('//', '/') : result;
+    final String resourcePath = isForSignedUrl ? '/$key' : '/$bucket/$key';
+    return _ossUriEncode(resourcePath, encodeSlash: false);
   }
 
   /// 构建规范查询字符串
   ///
-  /// 按照字典序排序参数, 并正确编码
+  /// 构建 V4 规范查询字符串。
+  ///
+  /// 阿里云 OSS V4 要求先按官方 UriEncode 规则编码 key/value，再按编码后的
+  /// `key=value` 片段字典序排序。不能先按原始中文或特殊字符排序，否则在
+  /// query 含中文、空格、括号等字符时会和服务端计算结果不一致。
   ///
   /// 参数：
   /// - [uri] 包含查询参数的 URI 对象
@@ -368,20 +356,12 @@ class AliOssV4SignUtils {
 
     final List<String> params = <String>[];
 
-    // 按字典序排序参数名
-    final List<String> sortedKeys = queryParams.keys.toList()..sort();
-
-    for (final String key in sortedKeys) {
-      final String encodedKey = Uri.encodeQueryComponent(key);
-
-      // 获取参数值并排序
-      final List<String> values =
-          List<String>.from(queryParams[key] ?? <String>[])..sort();
+    for (final String key in queryParams.keys) {
+      final String encodedKey = _ossUriEncode(key);
 
       // 处理每个值
-      for (final String value in values) {
-        final String encodedValue =
-            value.isEmpty ? '' : Uri.encodeQueryComponent(value);
+      for (final String value in queryParams[key] ?? <String>[]) {
+        final String encodedValue = value.isEmpty ? '' : _ossUriEncode(value);
 
         // 构建参数字符串
         if (encodedValue.isEmpty) {
@@ -392,7 +372,8 @@ class AliOssV4SignUtils {
       }
     }
 
-    // 连接所有参数
+    // 对已经编码完成的片段排序，保持和 OSS 服务端 CanonicalQueryString 一致。
+    params.sort();
     return params.join('&');
   }
 
@@ -420,13 +401,12 @@ class AliOssV4SignUtils {
     });
 
     // 自动收集“若存在则参与签名”的头部：x-oss-* / content-type / content-md5
-    final Set<String> autoSignHeaders = lowerHeaders.keys
-        .where((String k) => _isDefaultSignHeader(k))
-        .toSet();
+    final Set<String> autoSignHeaders =
+        lowerHeaders.keys.where((String k) => _isDefaultSignHeader(k)).toSet();
 
     // 合并：额外声明的头 ∪ 默认固定头 ∪ 自动收集头
     final Set<String> allSignHeaders = <String>{
-      ...additionalHeaders.map((e) => e.toLowerCase()),
+      ...additionalHeaders.map((String header) => header.toLowerCase()),
       ..._defaultSignHeaders,
       ...autoSignHeaders,
     };
@@ -665,23 +645,19 @@ class AliOssV4SignUtils {
     }
 
     // 2. 处理时间相关参数
-    final DateTime now = dateTime ?? DateTime.now().toUtc();
+    final DateTime now = (dateTime ?? DateTime.now()).toUtc();
     final String signDate = DateFormatter.formatYYYYMMDD(now);
     final String signTime = '${DateFormatter.formatYYYYMMDDTHHMMSS(now)}Z';
 
     // 3. 构建基础URL
     // 根据是否启用CNAME选择不同的域名构造方式
     final String host = cname ? endpoint : '$bucket.$endpoint';
-    final String path = '/$key';
-    final Uri baseUri = Uri.parse('https://$host$path');
+    final String encodedObjectPath = _ossUriEncode('/$key', encodeSlash: false);
 
-    // 4. 构建规范URI（用于签名计算）
-    // 根据官方Java Demo, 规范URI的格式应该是 /{bucket}/{key}
-    final String canonicalUri = '/$bucket/$key';
+    final String canonicalUri = _buildCanonicalUri(bucket, key);
 
-    // 5. 准备请求头
-    headers ??= <String, dynamic>{};
-    headers['host'] = host; // 确保 host 头部存在
+    final Map<String, dynamic> headersToSign = <String, dynamic>{...?headers};
+    headersToSign['host'] = host;
 
     // 6. 构建查询参数
     final Map<String, String> queryParams = <String, String>{};
@@ -702,10 +678,19 @@ class AliOssV4SignUtils {
       'x-oss-signature-version': 'OSS4-HMAC-SHA256',
     });
 
+    final Set<String> normalizedAdditionalHeaders =
+        (additionalHeaders ?? <String>{'host'})
+            .map((String header) => header.toLowerCase())
+            .toSet();
+    final List<String> addHeaders = normalizedAdditionalHeaders
+        .where((String e) => !_isDefaultSignHeader(e))
+        .toList()
+      ..sort();
+    final String additionalHeadersString = addHeaders.join(';');
+
     // 添加额外头部参数（如果有）
-    additionalHeaders ??= <String>{'host'};
-    if (additionalHeaders.isNotEmpty) {
-      queryParams['x-oss-additional-headers'] = additionalHeaders.join(';');
+    if (additionalHeadersString.isNotEmpty) {
+      queryParams['x-oss-additional-headers'] = additionalHeadersString;
     }
 
     // 添加安全令牌（如果有）
@@ -724,20 +709,13 @@ class AliOssV4SignUtils {
 
     // 5.2 构建规范头部
     final String canonicalHeaders = _buildCanonicalHeaders(
-      headers,
-      additionalHeaders,
+      headersToSign,
+      normalizedAdditionalHeaders,
     );
-
-    // 5.3 构建签名头部列表
-    final List<String> addHeaders = additionalHeaders
-        .where((String e) => !_isDefaultSignHeader(e))
-        .toList()
-      ..sort();
-    final String additionalHeadersString = addHeaders.join(';');
 
     // 5.4 获取负载哈希值
     final String hashedPayload =
-        headers['x-oss-content-sha256'] ?? 'UNSIGNED-PAYLOAD';
+        headersToSign['x-oss-content-sha256'] ?? 'UNSIGNED-PAYLOAD';
 
     // 5.5 组合构建规范请求
     final String canonicalRequest = <String>[
@@ -768,7 +746,44 @@ class AliOssV4SignUtils {
     // 8. 添加签名到查询参数
     queryParams['x-oss-signature'] = signature;
 
-    // 9. 构建并返回最终URL
-    return baseUri.replace(queryParameters: queryParams);
+    // 9. 构建并返回最终URL。这里不能依赖 Dart Uri 的默认编码，
+    // OSS V4 要求使用官方 UriEncode 规则（例如括号必须编码）。
+    final String encodedQuery = _buildQueryString(queryParams);
+    return Uri.parse('https://$host$encodedObjectPath?$encodedQuery');
+  }
+
+  /// 构建最终 URL 的 query 字符串。
+  ///
+  /// 预签名 URL 的实际 query 必须和参与签名的 CanonicalQueryString 使用同一套
+  /// OSS UriEncode 和排序规则，否则 URL 看起来合法但服务端验签会失败。
+  static String _buildQueryString(Map<String, String> queryParameters) {
+    final List<MapEntry<String, String>> entries =
+        queryParameters.entries.toList()
+          ..sort((MapEntry<String, String> a, MapEntry<String, String> b) {
+            final String encodedA = _ossUriEncode(a.key);
+            final String encodedB = _ossUriEncode(b.key);
+            final int keyCompare = encodedA.compareTo(encodedB);
+            if (keyCompare != 0) {
+              return keyCompare;
+            }
+            return _ossUriEncode(a.value).compareTo(_ossUriEncode(b.value));
+          });
+
+    return entries.map((MapEntry<String, String> entry) {
+      final String encodedKey = _ossUriEncode(entry.key);
+      if (entry.value.isEmpty) {
+        return encodedKey;
+      }
+      return '$encodedKey=${_ossUriEncode(entry.value)}';
+    }).join('&');
+  }
+
+  /// 阿里云 OSS V4 官方 UriEncode。
+  ///
+  /// 仅 `A-Z`、`a-z`、`0-9`、`-`、`_`、`.`、`~` 保持原样；其他 UTF-8 字节
+  /// 都用大写十六进制 `%XX` 编码。构建 CanonicalURI 时路径分隔符 `/` 不编码，
+  /// 构建 query key/value 时 `/` 也要按普通字符编码。
+  static String _ossUriEncode(String value, {bool encodeSlash = true}) {
+    return OSSUtils.ossUriEncode(value, encodeSlash: encodeSlash);
   }
 }

@@ -15,7 +15,7 @@ class DateFormatter {
   /// [dateTime] 要格式化的日期时间,默认为当前时间
   /// 返回格式化后的字符串
   static String formatYYYYMMDD(DateTime? dateTime) {
-    final DateTime dt = dateTime ?? DateTime.now().toUtc();
+    final DateTime dt = (dateTime ?? DateTime.now()).toUtc();
     return _padZero(dt.year, 4) + _padZero(dt.month, 2) + _padZero(dt.day, 2);
   }
 
@@ -26,7 +26,7 @@ class DateFormatter {
   /// [dateTime] 要格式化的日期时间,默认为当前时间
   /// 返回格式化后的字符串
   static String formatYYYYMMDDTHHMMSS(DateTime? dateTime) {
-    final DateTime dt = dateTime ?? DateTime.now().toUtc();
+    final DateTime dt = (dateTime ?? DateTime.now()).toUtc();
     return '${formatYYYYMMDD(dt)}T${_padZero(dt.hour, 2)}${_padZero(dt.minute, 2)}${_padZero(dt.second, 2)}';
   }
 

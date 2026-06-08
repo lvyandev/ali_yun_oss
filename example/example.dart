@@ -4,8 +4,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dart_aliyun_oss/dart_aliyun_oss.dart';
-import 'package:dart_aliyun_oss/src/models/list_bucket_result_v2.dart';
-import 'package:dart_aliyun_oss/src/models/object_meta.dart';
 import 'package:dio/dio.dart';
 
 import 'config.dart'; // 导入配置文件
