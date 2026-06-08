@@ -179,6 +179,52 @@ Future<void> multipartUpload() async {
 }
 ```
 
+### 断点续传上传
+
+`resumableUpload` 基于阿里云 OSS Multipart Upload API 实现。你需要在
+`onCheckpoint` 中保存检查点，并在下次调用时传回 `checkpoint`。
+
+```dart
+Future<void> resumableUpload() async {
+  final file = File('path/to/large/file.mp4');
+  final ossObjectKey = 'videos/large_file.mp4';
+  final checkpointFile = File('path/to/large_file.oss_checkpoint.json');
+
+  OSSMultipartUploadCheckpoint? checkpoint;
+  if (checkpointFile.existsSync()) {
+    checkpoint = OSSMultipartUploadCheckpoint.fromJson(
+      jsonDecode(await checkpointFile.readAsString()) as Map<String, dynamic>,
+    );
+  }
+
+  final response = await oss.resumableUpload(
+    file,
+    ossObjectKey,
+    checkpoint: checkpoint,
+    onCheckpoint: (OSSMultipartUploadCheckpoint checkpoint) async {
+      await checkpointFile.writeAsString(jsonEncode(checkpoint.toJson()));
+    },
+    params: OSSRequestParams(
+      onSendProgress: (int count, int total) {
+        print('断点续传进度: ${(count / total * 100).toStringAsFixed(2)}%');
+      },
+    ),
+  );
+
+  if (response.statusCode != null && response.statusCode! < 300) {
+    if (checkpointFile.existsSync()) {
+      await checkpointFile.delete();
+    }
+  }
+}
+```
+
+默认情况下，`resumableUpload` 上传失败时会保留 `uploadId` 和已上传分片，
+便于下次继续上传。如果你希望失败时立即清理 OSS 侧未完成分片，可以设置
+`abortOnError: true`。未完成的 Multipart Upload 会占用 OSS 存储资源，
+生产环境建议在业务侧提供清理逻辑，或在 Bucket 生命周期规则中清理过期的
+未完成分片上传。
+
 ### 使用查询参数
 
 ```dart

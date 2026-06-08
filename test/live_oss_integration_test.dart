@@ -325,8 +325,66 @@ void main() {
       expect(_bytesFromResponse(getResponse), content);
     });
 
+    test('resumableUpload 可从已有 uploadId 和远端分片恢复', () async {
+      final String key = '${prefix}resumable-multipart-(8).bin';
+      const int partSize = 128 * 1024;
+      final List<int> content =
+          _patternBytes(partSize * 2 + 17 * 1024, seed: 83);
+      final File file = File('${tempDirectory.path}/resumable.bin');
+      await file.writeAsBytes(content);
+
+      final Response<InitiateMultipartUploadResult> initResponse =
+          await client.initiateMultipartUpload(key);
+      final String uploadId = initResponse.data!.uploadId;
+      final _PendingMultipartUpload pending = _PendingMultipartUpload(
+        key,
+        uploadId,
+      );
+      pendingMultipartUploads.add(pending);
+
+      final Response<dynamic> partOneResponse = await client.uploadPart(
+        key,
+        content.sublist(0, partSize),
+        1,
+        uploadId,
+      );
+      expect(partOneResponse.headers.value('ETag'), isNotNull);
+
+      final OSSMultipartUploadCheckpoint checkpoint =
+          OSSMultipartUploadCheckpoint.fromFile(
+        file: file,
+        objectKey: key,
+        uploadId: uploadId,
+        partSize: partSize,
+      );
+      final List<OSSMultipartUploadCheckpoint> checkpoints =
+          <OSSMultipartUploadCheckpoint>[];
+
+      final Response<CompleteMultipartUploadResult> uploadResponse =
+          await client.resumableUpload(
+        file,
+        key,
+        checkpoint: checkpoint,
+        partSize: partSize,
+        maxConcurrency: 1,
+        onCheckpoint: checkpoints.add,
+      );
+      expect(uploadResponse.data!.key, key);
+      pendingMultipartUploads.remove(pending);
+      objectKeys.add(key);
+
+      expect(checkpoints, isNotEmpty);
+      expect(
+        checkpoints.last.uploadedParts.map((PartInfo part) => part.partNumber),
+        <int>[1, 2, 3],
+      );
+
+      final Response<dynamic> getResponse = await client.getObject(key);
+      expect(_bytesFromResponse(getResponse), content);
+    });
+
     test('deleteObject 可删除普通对象', () async {
-      final String key = '${prefix}delete-object-(8).txt';
+      final String key = '${prefix}delete-object-(9).txt';
       const String content = 'delete target';
       objectKeys.add(key);
       await client.putObjectFromString(content, key);

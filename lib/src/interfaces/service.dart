@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dart_aliyun_oss/src/models/models.dart';
@@ -8,6 +9,11 @@ typedef PartProgressCallback = void Function(
   int partNumber,
   int count,
   int total,
+);
+
+/// 分片断点续传检查点回调。
+typedef MultipartUploadCheckpointCallback = FutureOr<void> Function(
+  OSSMultipartUploadCheckpoint checkpoint,
 );
 
 mixin IOSSService {
@@ -306,6 +312,28 @@ mixin IOSSService {
     int maxConcurrency = 5,
     int? numberOfParts,
     PartProgressCallback? onPartProgress, // 分片进度
+    CancelToken? cancelToken,
+    OSSRequestParams? params,
+  });
+
+  /// 使用断点续传方式上传文件。
+  ///
+  /// 该方法基于 OSS Multipart Upload API 实现。调用方应在 [onCheckpoint]
+  /// 中持久化检查点，并在下次调用时通过 [checkpoint] 传回，从而跳过已经
+  /// 成功上传的分片。
+  ///
+  /// [abortOnError] 默认为 false，表示上传失败后保留 uploadId 和已上传分片
+  /// 供下次恢复；设置为 true 时，失败会主动调用 [abortMultipartUpload]
+  /// 清理 OSS 侧未完成分片。
+  Future<Response<CompleteMultipartUploadResult>> resumableUpload(
+    File file,
+    String ossObjectKey, {
+    OSSMultipartUploadCheckpoint? checkpoint,
+    int? partSize,
+    int maxConcurrency = 5,
+    PartProgressCallback? onPartProgress,
+    MultipartUploadCheckpointCallback? onCheckpoint,
+    bool abortOnError = false,
     CancelToken? cancelToken,
     OSSRequestParams? params,
   });

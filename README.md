@@ -179,6 +179,52 @@ Future<void> multipartUpload() async {
 }
 ```
 
+### Resumable Upload
+
+`resumableUpload` is built on Alibaba Cloud OSS Multipart Upload APIs. Save the
+checkpoint from `onCheckpoint`, then pass it back as `checkpoint` when retrying.
+
+```dart
+Future<void> resumableUpload() async {
+  final file = File('path/to/large/file.mp4');
+  final ossObjectKey = 'videos/large_file.mp4';
+  final checkpointFile = File('path/to/large_file.oss_checkpoint.json');
+
+  OSSMultipartUploadCheckpoint? checkpoint;
+  if (checkpointFile.existsSync()) {
+    checkpoint = OSSMultipartUploadCheckpoint.fromJson(
+      jsonDecode(await checkpointFile.readAsString()) as Map<String, dynamic>,
+    );
+  }
+
+  final response = await oss.resumableUpload(
+    file,
+    ossObjectKey,
+    checkpoint: checkpoint,
+    onCheckpoint: (OSSMultipartUploadCheckpoint checkpoint) async {
+      await checkpointFile.writeAsString(jsonEncode(checkpoint.toJson()));
+    },
+    params: OSSRequestParams(
+      onSendProgress: (int count, int total) {
+        print('Resumable progress: ${(count / total * 100).toStringAsFixed(2)}%');
+      },
+    ),
+  );
+
+  if (response.statusCode != null && response.statusCode! < 300) {
+    if (checkpointFile.existsSync()) {
+      await checkpointFile.delete();
+    }
+  }
+}
+```
+
+By default, `resumableUpload` keeps the `uploadId` and uploaded parts after a
+failure so the next call can resume. Set `abortOnError: true` if failed uploads
+should be cleaned up immediately. Incomplete Multipart Upload tasks occupy OSS
+storage, so production systems should provide cleanup logic or configure a
+Bucket lifecycle rule for expired incomplete uploads.
+
 ### Using Query Parameters
 
 ```dart

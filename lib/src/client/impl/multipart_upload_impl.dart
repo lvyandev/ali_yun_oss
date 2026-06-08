@@ -329,6 +329,393 @@ mixin MultipartUploadImpl on IOSSService {
     });
   }
 
+  /// 使用断点续传方式上传文件。
+  @override
+  Future<Response<CompleteMultipartUploadResult>> resumableUpload(
+    File file,
+    String ossObjectKey, {
+    OSSMultipartUploadCheckpoint? checkpoint,
+    int? partSize,
+    int maxConcurrency = 5,
+    PartProgressCallback? onPartProgress,
+    MultipartUploadCheckpointCallback? onCheckpoint,
+    bool abortOnError = false,
+    CancelToken? cancelToken,
+    OSSRequestParams? params,
+  }) async {
+    final OSSClient client = this as OSSClient;
+    final String requestKey =
+        'resumableUpload_${ossObjectKey}_${DateTime.now().millisecondsSinceEpoch}';
+
+    return client.requestHandler.executeRequest(requestKey, cancelToken, (
+      CancelToken effectiveToken,
+    ) async {
+      final OSSRequestParams effectiveParams =
+          (params ?? const OSSRequestParams()).copyWith(
+        cancelToken: effectiveToken,
+      );
+      String? uploadId = checkpoint?.uploadId;
+      OSSMultipartUploadCheckpoint? currentCheckpoint = checkpoint;
+
+      try {
+        _validateResumableUploadInput(
+          file: file,
+          ossObjectKey: ossObjectKey,
+          maxConcurrency: maxConcurrency,
+        );
+
+        final int totalFileSize = file.lengthSync();
+        final int effectivePartSize = _resolveResumablePartSize(
+          totalFileSize: totalFileSize,
+          checkpoint: currentCheckpoint,
+          partSize: partSize,
+        );
+        final int numberOfParts = (totalFileSize / effectivePartSize).ceil();
+
+        _validateResumablePartConfig(
+          partSize: effectivePartSize,
+          numberOfParts: numberOfParts,
+        );
+
+        if (currentCheckpoint != null &&
+            !currentCheckpoint.matchesFile(file, ossObjectKey)) {
+          throw const OSSException(
+            type: OSSErrorType.invalidArgument,
+            message: '断点续传检查点与当前文件不匹配，请重新初始化上传。',
+          );
+        }
+
+        if (uploadId == null || uploadId.isEmpty) {
+          final Response<InitiateMultipartUploadResult> initResponse =
+              await client.initiateMultipartUpload(
+            ossObjectKey,
+            params: effectiveParams,
+          );
+          uploadId = initResponse.data?.uploadId;
+          if (uploadId == null || uploadId.isEmpty) {
+            throw OSSException(
+              type: OSSErrorType.initiateMultipartFailed,
+              message: '初始化断点续传失败, uploadId 为 null 或为空。',
+              response: initResponse,
+              requestOptions: initResponse.requestOptions,
+            );
+          }
+          currentCheckpoint = OSSMultipartUploadCheckpoint.fromFile(
+            file: file,
+            objectKey: ossObjectKey,
+            uploadId: uploadId,
+            partSize: effectivePartSize,
+          );
+          await _notifyCheckpoint(onCheckpoint, currentCheckpoint);
+        }
+
+        final Map<int, PartInfo> uploadedPartsByNumber = <int, PartInfo>{};
+        for (final PartInfo part in currentCheckpoint!.uploadedParts) {
+          if (part.partNumber >= 1 && part.partNumber <= numberOfParts) {
+            uploadedPartsByNumber[part.partNumber] = part;
+          }
+        }
+
+        final List<PartInfo> remoteParts = await _listAllUploadedParts(
+          client: client,
+          ossObjectKey: ossObjectKey,
+          uploadId: uploadId,
+          params: effectiveParams,
+        );
+        for (final PartInfo part in remoteParts) {
+          if (part.partNumber >= 1 && part.partNumber <= numberOfParts) {
+            uploadedPartsByNumber[part.partNumber] = part;
+          }
+        }
+
+        currentCheckpoint = currentCheckpoint.copyWith(
+          uploadedParts: _sortParts(uploadedPartsByNumber.values),
+        );
+        await _notifyCheckpoint(onCheckpoint, currentCheckpoint);
+
+        int uploadedSize = _calculateUploadedBytes(
+          uploadedPartsByNumber.keys,
+          totalFileSize,
+          effectivePartSize,
+        );
+        effectiveParams.onSendProgress?.call(uploadedSize, totalFileSize);
+
+        bool hasErrorOccurred = false;
+        Object? firstError;
+        StackTrace? firstStackTrace;
+        final Semaphore semaphore = Semaphore(maxConcurrency);
+        final List<Future<void>> partTasks = <Future<void>>[];
+
+        for (int partIndex = 0; partIndex < numberOfParts; partIndex++) {
+          final int partNumber = partIndex + 1;
+          if (uploadedPartsByNumber.containsKey(partNumber)) {
+            continue;
+          }
+
+          final int offset = partIndex * effectivePartSize;
+          final int readLength = math.min(
+            effectivePartSize,
+            totalFileSize - offset,
+          );
+
+          final Future<void> partTask = semaphore.acquire().then((_) async {
+            if (hasErrorOccurred || effectiveToken.isCancelled) {
+              semaphore.release();
+              return;
+            }
+
+            try {
+              await _uploadPartStreaming(
+                client: client,
+                file: file,
+                offset: offset,
+                length: readLength,
+                ossObjectKey: ossObjectKey,
+                partNumber: partNumber,
+                uploadId: uploadId!,
+                params: effectiveParams,
+                effectiveToken: effectiveToken,
+                onPartProgress: onPartProgress,
+                isErrorGlobally: hasErrorOccurred,
+                onSuccess: (PartInfo partInfo) async {
+                  uploadedPartsByNumber[partNumber] = partInfo;
+                  uploadedSize += readLength;
+                  effectiveParams.onSendProgress?.call(
+                    uploadedSize,
+                    totalFileSize,
+                  );
+                  currentCheckpoint = currentCheckpoint!.copyWith(
+                    uploadedParts: _sortParts(uploadedPartsByNumber.values),
+                  );
+                  await _notifyCheckpoint(onCheckpoint, currentCheckpoint!);
+                },
+                onError: (dynamic error, StackTrace stackTrace) {
+                  hasErrorOccurred = true;
+                  firstError ??= error;
+                  firstStackTrace ??= stackTrace;
+                },
+              );
+            } catch (error, stackTrace) {
+              hasErrorOccurred = true;
+              firstError ??= error;
+              firstStackTrace ??= stackTrace;
+              rethrow;
+            } finally {
+              semaphore.release();
+            }
+          });
+
+          partTasks.add(partTask);
+        }
+
+        await Future.wait(partTasks);
+
+        if (effectiveToken.isCancelled) {
+          throw const OSSException(
+            type: OSSErrorType.requestCancelled,
+            message: '断点续传上传被取消。',
+          );
+        }
+
+        if (hasErrorOccurred) {
+          if (firstError is OSSException) {
+            Error.throwWithStackTrace(firstError!, firstStackTrace!);
+          }
+          throw OSSException(
+            type: OSSErrorType.uploadPartFailed,
+            message: '断点续传上传分片失败: $firstError',
+            originalError: firstError,
+          );
+        }
+
+        final List<PartInfo> completedParts = _sortParts(
+          uploadedPartsByNumber.values,
+        );
+        if (completedParts.length != numberOfParts) {
+          throw OSSException(
+            type: OSSErrorType.uploadPartFailed,
+            message:
+                '断点续传分片不完整,预期 $numberOfParts 个分片,实际 ${completedParts.length} 个。',
+          );
+        }
+
+        final Response<CompleteMultipartUploadResult> completeResponse =
+            await client.completeMultipartUpload(
+          ossObjectKey,
+          uploadId,
+          completedParts,
+          params: effectiveParams,
+        );
+
+        return completeResponse;
+      } catch (error) {
+        if (abortOnError && uploadId != null && uploadId.isNotEmpty) {
+          try {
+            await client.abortMultipartUpload(
+              ossObjectKey,
+              uploadId,
+              params: effectiveParams,
+            );
+          } catch (abortError) {
+            log('断点续传失败后清理 uploadId 失败: $abortError');
+          }
+        }
+
+        if (error is OSSException) {
+          rethrow;
+        }
+        if (error is DioException && error.type == DioExceptionType.cancel) {
+          throw OSSException(
+            type: OSSErrorType.requestCancelled,
+            message: '断点续传上传被取消。',
+            originalError: error,
+          );
+        }
+        throw OSSException(
+          type: OSSErrorType.unknown,
+          message: '断点续传上传失败: $error',
+          originalError: error,
+        );
+      }
+    });
+  }
+
+  void _validateResumableUploadInput({
+    required File file,
+    required String ossObjectKey,
+    required int maxConcurrency,
+  }) {
+    if (ossObjectKey.isEmpty) {
+      throw const OSSException(
+        type: OSSErrorType.invalidArgument,
+        message: 'OSS 对象键不能为空',
+      );
+    }
+    if (!file.existsSync()) {
+      throw OSSException(
+        type: OSSErrorType.fileSystem,
+        message: '文件未找到: ${file.path}',
+      );
+    }
+    if (file.lengthSync() == 0) {
+      throw const OSSException(
+        type: OSSErrorType.invalidArgument,
+        message: '文件大小为0,不能进行断点续传上传',
+      );
+    }
+    if (maxConcurrency < 1) {
+      throw const OSSException(
+        type: OSSErrorType.invalidArgument,
+        message: 'maxConcurrency 必须大于 0',
+      );
+    }
+  }
+
+  int _resolveResumablePartSize({
+    required int totalFileSize,
+    required OSSMultipartUploadCheckpoint? checkpoint,
+    required int? partSize,
+  }) {
+    if (checkpoint != null) {
+      if (partSize != null && checkpoint.partSize != partSize) {
+        throw const OSSException(
+          type: OSSErrorType.invalidArgument,
+          message: '指定的 partSize 与断点续传检查点不一致',
+        );
+      }
+      return checkpoint.partSize;
+    }
+    if (partSize != null) {
+      return partSize;
+    }
+    return OSSUtils.calculatePartConfig(totalFileSize, null).partSize;
+  }
+
+  void _validateResumablePartConfig({
+    required int partSize,
+    required int numberOfParts,
+  }) {
+    if (numberOfParts < 1 || numberOfParts > 10000) {
+      throw const OSSException(
+        type: OSSErrorType.invalidArgument,
+        message: '分片数量必须在 1 到 10000 之间',
+      );
+    }
+    if (partSize > 5 * 1024 * 1024 * 1024) {
+      throw const OSSException(
+        type: OSSErrorType.invalidArgument,
+        message: '分片大小不能超过 5GB',
+      );
+    }
+    if (numberOfParts > 1 && partSize < 100 * 1024) {
+      throw const OSSException(
+        type: OSSErrorType.invalidArgument,
+        message: '除最后一个分片外,分片大小必须大于等于 100KB',
+      );
+    }
+  }
+
+  Future<List<PartInfo>> _listAllUploadedParts({
+    required OSSClient client,
+    required String ossObjectKey,
+    required String uploadId,
+    required OSSRequestParams params,
+  }) async {
+    final List<PartInfo> parts = <PartInfo>[];
+    int? partNumberMarker;
+    do {
+      final Response<ListPartsResult> response = await client.listParts(
+        ossObjectKey,
+        uploadId,
+        maxParts: 1000,
+        partNumberMarker: partNumberMarker,
+        params: params,
+      );
+      final ListPartsResult? result = response.data;
+      if (result == null) {
+        break;
+      }
+      parts.addAll(result.parts);
+      partNumberMarker =
+          result.isTruncated ? result.nextPartNumberMarker : null;
+    } while (partNumberMarker != null);
+    return parts;
+  }
+
+  int _calculateUploadedBytes(
+    Iterable<int> uploadedPartNumbers,
+    int totalFileSize,
+    int partSize,
+  ) {
+    int uploadedBytes = 0;
+    for (final int partNumber in uploadedPartNumbers) {
+      final int offset = (partNumber - 1) * partSize;
+      if (offset >= totalFileSize) {
+        continue;
+      }
+      uploadedBytes += math.min(partSize, totalFileSize - offset);
+    }
+    return uploadedBytes;
+  }
+
+  List<PartInfo> _sortParts(Iterable<PartInfo> parts) {
+    final List<PartInfo> sortedParts = parts.toList();
+    sortedParts.sort((PartInfo left, PartInfo right) {
+      return left.partNumber.compareTo(right.partNumber);
+    });
+    return sortedParts;
+  }
+
+  Future<void> _notifyCheckpoint(
+    MultipartUploadCheckpointCallback? onCheckpoint,
+    OSSMultipartUploadCheckpoint checkpoint,
+  ) async {
+    if (onCheckpoint == null) {
+      return;
+    }
+    await onCheckpoint(checkpoint);
+  }
+
   /// 流式上传单个分片,避免一次性加载整个分片到内存
   Future<void> _uploadPartStreaming({
     required OSSClient client,
@@ -342,8 +729,8 @@ mixin MultipartUploadImpl on IOSSService {
     required CancelToken effectiveToken,
     required PartProgressCallback? onPartProgress,
     required bool isErrorGlobally,
-    required Function(PartInfo partInfo) onSuccess,
-    required Function(dynamic error, StackTrace stackTrace) onError,
+    required FutureOr<void> Function(PartInfo partInfo) onSuccess,
+    required void Function(dynamic error, StackTrace stackTrace) onError,
   }) async {
     try {
       if (effectiveToken.isCancelled || isErrorGlobally) {
@@ -436,7 +823,7 @@ mixin MultipartUploadImpl on IOSSService {
         );
 
         // 报告成功
-        onSuccess(partInfo);
+        await onSuccess(partInfo);
       } finally {
         await controller?.close();
         await raf.close();
