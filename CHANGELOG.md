@@ -2,6 +2,29 @@
 
 [English](CHANGELOG.md) | [中文](CHANGELOG_zh.md)
 
+## 1.3.0
+
+### 🐛 Fixes
+- Fix OSS V1/V4 signed URLs and request signing for object keys containing spaces, plus signs, parentheses, and non-ASCII characters.
+- Fix V4 canonical query sorting to use OSS UriEncode output, matching Aliyun OSS signature verification rules.
+- Fix V1 canonical resource generation so only OSS subresources and response override parameters are included in the signature.
+- Fix bucket-root requests such as object listing to sign the bucket resource path correctly.
+- Fix `getObjectMeta` to use `HEAD` consistently.
+- Fix multipart part uploads to send byte data as a stream.
+- Prevent `OSSRequestParams.queryParameters` and direct query parameter maps from being mutated during signing.
+
+### ✨ Enhancements
+- Add shared OSS UriEncode handling for request URLs and signing code.
+- Export `ListBucketResultV2` and `ObjectMeta` from the public models barrel.
+- Add regression tests for signature encoding, bucket-root signing, and query parameter immutability.
+- Add opt-in live OSS integration tests that require explicit environment variables and do not read local credential files.
+
+### 📦 Dependencies
+- Update `crypto` to `^3.0.7`, `dio` to `^5.9.2`, `xml` to `^7.0.1`, `lints` to `^6.1.0`, and `test` to `^1.31.1`.
+
+### 🔄 Compatibility
+- Backward compatible: fixes signature correctness and URL encoding behavior without API-breaking changes.
+
 ## 1.2.3
 
 ### ✨ Enhancements

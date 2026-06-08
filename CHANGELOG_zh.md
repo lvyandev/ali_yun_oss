@@ -2,6 +2,29 @@
 
 [English](CHANGELOG.md) | [中文](CHANGELOG_zh.md)
 
+## 1.3.0
+
+### 🐛 修复
+- 修复包含空格、加号、括号和非 ASCII 字符的对象键在 OSS V1/V4 签名 URL 与请求签名中验签失败的问题。
+- 修复 V4 规范查询字符串排序逻辑，改为按 OSS UriEncode 后的结果排序，与阿里云 OSS 服务端验签规则一致。
+- 修复 V1 CanonicalizedResource 生成逻辑，仅将 OSS 子资源和响应头覆盖参数纳入签名。
+- 修复对象列举等 Bucket 根路径请求的签名资源路径。
+- 修复 `getObjectMeta` 请求方法，统一使用 `HEAD`。
+- 修复分片上传时分片字节数据的流式发送方式。
+- 修复签名过程中原地修改 `OSSRequestParams.queryParameters` 或直接传入 query map 的副作用。
+
+### ✨ 增强
+- 新增共享 OSS UriEncode 处理，用于请求 URL 构造和签名计算。
+- 从公共 models barrel 导出 `ListBucketResultV2` 和 `ObjectMeta`。
+- 新增签名编码、Bucket 根路径签名和 query 参数不可变性的回归测试。
+- 新增显式环境变量开关控制的真实 OSS 集成测试，不读取本机凭证文件。
+
+### 📦 依赖
+- 更新 `crypto` 到 `^3.0.7`、`dio` 到 `^5.9.2`、`xml` 到 `^7.0.1`、`lints` 到 `^6.1.0`、`test` 到 `^1.31.1`。
+
+### 🔄 兼容性
+- 向后兼容：修复签名正确性与 URL 编码行为，不包含破坏性 API 变更。
+
 ## 1.2.3
 
 ### ✨ 增强
