@@ -2,6 +2,24 @@
 
 [English](CHANGELOG.md) | [中文](CHANGELOG_zh.md)
 
+## 1.4.0
+
+### ✨ Enhancements
+- Add true multi-instance support for `OSSClient`, allowing separate clients for different buckets, regions, custom domains, or credentials.
+- Add the recommended `OSSClient(config)` construction style while keeping `OSSClient.init(config)` for backward compatibility.
+- Keep `OSSClient.instance` as a compatibility default instance that points to the latest client created via `OSSClient.init(config)`.
+- Add `OSSClient.dispose()` to cancel requests owned by the current client and release SDK-owned HTTP resources.
+
+### 🧪 Tests
+- Add regression coverage for multiple independent clients, signing isolation, default instance compatibility, request manager isolation, and `dispose()` behavior.
+
+### 📚 Docs
+- Update English and Chinese README examples to recommend explicit `OSSClient(config)` instances.
+
+### 🔄 Compatibility
+- Backward compatible for projects that initialize once and use the returned client or `OSSClient.instance`.
+- Behavior note: repeated `OSSClient.init(config)` calls now create separate clients and update `OSSClient.instance` to the most recent one instead of failing with `LateInitializationError`.
+
 ## 1.3.1
 
 ### 📦 Dependencies

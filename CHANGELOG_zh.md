@@ -2,6 +2,24 @@
 
 [English](CHANGELOG.md) | [中文](CHANGELOG_zh.md)
 
+## 1.4.0
+
+### ✨ 增强
+- 为 `OSSClient` 新增真正的多实例支持，可在同一应用中为不同 Bucket、Region、自定义域名或凭证创建独立客户端。
+- 新增推荐写法 `OSSClient(config)`，同时保留 `OSSClient.init(config)` 作为旧代码兼容入口。
+- 继续保留 `OSSClient.instance` 作为兼容默认实例，指向最近一次通过 `OSSClient.init(config)` 创建的客户端。
+- 新增 `OSSClient.dispose()`，用于取消当前客户端管理的请求，并释放 SDK 内部创建的 HTTP 资源。
+
+### 🧪 测试
+- 新增多客户端隔离回归测试，覆盖签名隔离、默认实例兼容、请求管理器隔离和 `dispose()` 行为。
+
+### 📚 文档
+- 更新中英文 README 示例，推荐使用显式 `OSSClient(config)` 客户端实例。
+
+### 🔄 兼容性
+- 对于只初始化一次并使用返回客户端或 `OSSClient.instance` 的旧项目保持兼容。
+- 行为说明：重复调用 `OSSClient.init(config)` 现在会创建独立客户端，并将 `OSSClient.instance` 更新为最近一次创建的客户端，不再因 `LateInitializationError` 失败。
+
 ## 1.3.1
 
 ### 📦 依赖
