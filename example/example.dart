@@ -932,7 +932,7 @@ Future<void> main() async {
 
   // 方式1：使用静态配置（传统方式）
   print('📋 初始化OSS客户端...');
-  oss = OSSClient.init(
+  oss = OSSClient(
     OSSConfig.static(
       accessKeyId: OssConfig.accessKeyId,
       accessKeySecret: OssConfig.accessKeySecret,
@@ -948,7 +948,7 @@ Future<void> main() async {
   // 取消注释以下代码来使用STS动态刷新功能：
   /*
   final stsManager = StsTokenManager();
-  oss = OSSClient.init(
+  oss = OSSClient(
     OSSConfig(
       accessKeyIdProvider: () => stsManager.accessKeyId,
       accessKeySecretProvider: () => stsManager.accessKeySecret,
@@ -963,7 +963,7 @@ Future<void> main() async {
   // 方式3：使用自定义域名（CNAME）
   // 取消注释以下代码来使用自定义域名：
   /*
-  oss = OSSClient.init(
+  oss = OSSClient(
     OSSConfig.static(
       accessKeyId: OssConfig.accessKeyId,
       accessKeySecret: OssConfig.accessKeySecret,

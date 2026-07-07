@@ -32,9 +32,9 @@ dart pub get
 ```dart
 import 'package:dart_aliyun_oss/dart_aliyun_oss.dart';
 
-// Initialize OSS client
-final oss = OSSClient.init(
-  OSSConfig(
+// Create an OSS client instance
+final oss = OSSClient(
+  OSSConfig.static(
     endpoint: 'your-endpoint.aliyuncs.com', // e.g. oss-cn-hangzhou.aliyuncs.com
     region: 'your-region', // e.g. cn-hangzhou
     accessKeyId: 'your-access-key-id',
@@ -44,13 +44,21 @@ final oss = OSSClient.init(
 );
 ```
 
+Each `OSSClient` instance owns its own configuration, request manager, and
+signing strategies. You can create multiple clients for different buckets,
+regions, custom domains, or credentials in the same application.
+
+`OSSClient.init(config)` is still available for older code. It creates a new
+client and updates `OSSClient.instance` to that latest client, but new code
+should keep and pass the explicit client instance.
+
 ### Using Custom Domain (CNAME)
 
 If you have bound a custom domain to your OSS bucket, you can use it instead of the default OSS endpoint:
 
 ```dart
-// Initialize OSS client with custom domain
-final oss = OSSClient.init(
+// Create OSS client with custom domain
+final oss = OSSClient(
   OSSConfig.static(
     endpoint: 'img.example.com', // Your custom domain
     region: 'cn-hangzhou',
@@ -268,7 +276,7 @@ final OSSConfig configWithSTS = OSSConfig.static(
   region: 'cn-hangzhou',
 );
 
-final OSSClient ossWithSTS = OSSClient.init(configWithSTS);
+final OSSClient ossWithSTS = OSSClient(configWithSTS);
 
 // Upload file using STS temporary token
 await ossWithSTS.putObject(
@@ -321,7 +329,7 @@ class StsTokenManager {
 
 // Initialize client with dynamic STS token refresh
 final stsManager = StsTokenManager();
-final OSSClient ossWithDynamicSTS = OSSClient.init(
+final OSSClient ossWithDynamicSTS = OSSClient(
   OSSConfig(
     accessKeyIdProvider: () => stsManager.accessKeyId,
     accessKeySecretProvider: () => stsManager.accessKeySecret,

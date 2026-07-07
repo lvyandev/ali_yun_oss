@@ -32,9 +32,9 @@ dart pub get
 ```dart
 import 'package:dart_aliyun_oss/dart_aliyun_oss.dart';
 
-// 初始化OSS客户端
-final oss = OSSClient.init(
-  OSSConfig(
+// 创建OSS客户端实例
+final oss = OSSClient(
+  OSSConfig.static(
     endpoint: 'your-endpoint.aliyuncs.com', // 例如: oss-cn-hangzhou.aliyuncs.com
     region: 'your-region', // 例如: cn-hangzhou
     accessKeyId: 'your-access-key-id',
@@ -44,13 +44,20 @@ final oss = OSSClient.init(
 );
 ```
 
+每个 `OSSClient` 实例都拥有独立的配置、请求管理器和签名策略。同一个应用中
+可以为不同 Bucket、Region、自定义域名或凭证创建多个客户端。
+
+`OSSClient.init(config)` 仍保留用于兼容旧代码。它会创建一个新的客户端，并将
+`OSSClient.instance` 更新为最近一次创建的客户端；新代码建议保存并传递显式的
+客户端实例。
+
 ### 使用自定义域名（CNAME）
 
 如果您已经将自定义域名绑定到OSS存储空间，可以使用自定义域名代替默认的OSS端点：
 
 ```dart
-// 使用自定义域名初始化OSS客户端
-final oss = OSSClient.init(
+// 使用自定义域名创建OSS客户端
+final oss = OSSClient(
   OSSConfig.static(
     endpoint: 'img.example.com', // 您的自定义域名
     region: 'cn-hangzhou',
@@ -268,7 +275,7 @@ final OSSConfig configWithSTS = OSSConfig.static(
   region: 'cn-hangzhou',
 );
 
-final OSSClient ossWithSTS = OSSClient.init(configWithSTS);
+final OSSClient ossWithSTS = OSSClient(configWithSTS);
 
 // 使用STS临时令牌上传文件
 await ossWithSTS.putObject(
@@ -321,7 +328,7 @@ class StsTokenManager {
 
 // 使用动态STS令牌刷新初始化客户端
 final stsManager = StsTokenManager();
-final OSSClient ossWithDynamicSTS = OSSClient.init(
+final OSSClient ossWithDynamicSTS = OSSClient(
   OSSConfig(
     accessKeyIdProvider: () => stsManager.accessKeyId,
     accessKeySecretProvider: () => stsManager.accessKeySecret,

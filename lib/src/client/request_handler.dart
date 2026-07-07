@@ -18,7 +18,6 @@ import 'request_manager.dart';
 /// 内部使用 [Dio] 客户端进行实际的网络请求,并与 [OSSRequestManager] 协同工作
 /// 管理请求的取消令牌。
 class OSSRequestHandler {
-
   /// 构造函数
   ///
   /// 创建一个新的 OSS 请求处理器实例。
@@ -29,6 +28,14 @@ class OSSRequestHandler {
   OSSRequestHandler(this._dio, this._requestManager);
   final Dio _dio;
   final OSSRequestManager _requestManager;
+
+  /// 关闭底层 Dio 客户端。
+  ///
+  /// 参数：
+  /// - [force] 是否强制关闭仍在进行的连接
+  void close({bool force = false}) {
+    _dio.close(force: force);
+  }
 
   /// 封装请求执行逻辑,处理 CancelToken 和资源清理
   ///
@@ -172,7 +179,7 @@ class OSSRequestHandler {
         final bool deleteOnError = optionalParams?['deleteOnError'] ?? true;
         final FileAccessMode fileAccessMode =
             (optionalParams?['fileAccessMode'] as FileAccessMode?) ??
-            FileAccessMode.write;
+                FileAccessMode.write;
 
         // 执行下载请求
         return _dio.downloadUri(

@@ -23,7 +23,7 @@ void main() async {
 
   print('1. 标准OSS域名配置演示');
   print('=' * 50);
-  
+
   // 标准配置
   final OSSConfig standardConfig = OSSConfig.static(
     accessKeyId: accessKeyId,
@@ -41,7 +41,7 @@ void main() async {
   print('  - 完整配置: $standardConfig\n');
 
   // 初始化客户端（标准域名）
-  final OSSClient standardClient = OSSClient.init(standardConfig);
+  final OSSClient standardClient = OSSClient(standardConfig);
 
   // 生成标准URL
   final Uri standardUri = standardClient.buildOssUri(fileKey: testFile);
@@ -145,7 +145,7 @@ final config = OSSConfig.static(
   cname: true, // 启用自定义域名
 );
 
-final oss = OSSClient.init(config);
+final oss = OSSClient(config);
 
 // 生成使用自定义域名的URL
 final uri = oss.buildOssUri(fileKey: 'path/to/file.jpg');
